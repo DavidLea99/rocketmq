@@ -276,6 +276,7 @@ public abstract class RebalanceImpl {
                     List<MessageQueue> mqAll = new ArrayList<MessageQueue>();
                     mqAll.addAll(mqSet);
 
+                    //对消息队列和消费者ID列表进行排序，为了避免同一个消息被分配给多个消费者
                     Collections.sort(mqAll);
                     Collections.sort(cidAll);
 
@@ -368,6 +369,7 @@ public abstract class RebalanceImpl {
             }
         }
 
+        //在这里构建了拉取消息服务线程里阻塞队列的数据源
         List<PullRequest> pullRequestList = new ArrayList<PullRequest>();
         for (MessageQueue mq : mqSet) {
             if (!this.processQueueTable.containsKey(mq)) {

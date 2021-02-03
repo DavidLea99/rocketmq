@@ -79,6 +79,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
     @Override
     public RemotingCommand processRequest(final ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
+        //这里走的是正常netty server服务处理器回调的逻辑，brokerAllowSuspend传递为true，表示拉取不到消息时可以允许挂起并进行一次长轮询处理
         return this.processRequest(ctx.channel(), request, true);
     }
 
@@ -122,6 +123,8 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         final boolean hasCommitOffsetFlag = PullSysFlag.hasCommitOffsetFlag(requestHeader.getSysFlag());
         final boolean hasSubscriptionFlag = PullSysFlag.hasSubscriptionFlag(requestHeader.getSysFlag());
 
+        //这里根据是否有挂起标记来获取挂起的超时时间(15s)，解码后的requestHeader请求头信息中suspendTimeoutMillis值的设置是在拉取消息
+        //服务DefaultMQPushConsumerImpl#pullMessage发起rpc调用请求之前设置，这里面定义了一个常量值BROKER_SUSPEND_MAX_TIME_MILLIS=1000*15ms
         final long suspendTimeoutMillisLong = hasSuspendFlag ? requestHeader.getSuspendTimeoutMillis() : 0;
 
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
@@ -234,6 +237,8 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 this.brokerController.getConsumerFilterManager());
         }
 
+        //根据consumerGroup、topic、queueId、queueOffset、maxMsgNums以及messageFilter到MessageStore中获取消息
+        //broker端的消息会在这里进行过滤处理
         final GetMessageResult getMessageResult =
             this.brokerController.getMessageStore().getMessage(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                 requestHeader.getQueueId(), requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(), messageFilter);
@@ -368,6 +373,11 @@ public class PullMessageProcessor implements NettyRequestProcessor {
 
             switch (response.getCode()) {
                 case ResponseCode.SUCCESS:
+                    if (brokerAllowSuspend){
+                        log.info("Netty回调获取到消息");
+                    }else{
+                        log.info("通过挂起长轮询恢复后进入获取到消息");
+                    }
 
                     this.brokerController.getBrokerStatsManager().incGroupGetNums(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                         getMessageResult.getMessageCount());
@@ -382,6 +392,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                         this.brokerController.getBrokerStatsManager().incGroupGetLatency(requestHeader.getConsumerGroup(),
                             requestHeader.getTopic(), requestHeader.getQueueId(),
                             (int) (this.brokerController.getMessageStore().now() - beginTimeMills));
+                        //消息体数据byte[]在这里填充进去的
                         response.setBody(r);
                     } else {
                         try {
@@ -406,8 +417,11 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                     break;
                 case ResponseCode.PULL_NOT_FOUND:
 
+                    //得到的响应码code为PULL_NOT_FOUND(19)时，这时根据传入的brokerAllowSuspend和请求时的sysFlag构造hasSuspendFlag标记同时成立时则会长轮训挂起
                     if (brokerAllowSuspend && hasSuspendFlag) {
+                        //得到长轮询挂起请求的超时时间毫秒值
                         long pollingTimeMills = suspendTimeoutMillisLong;
+                        //默认长轮训是否开启设置为true
                         if (!this.brokerController.getBrokerConfig().isLongPollingEnable()) {
                             pollingTimeMills = this.brokerController.getBrokerConfig().getShortPollingTimeMills();
                         }
@@ -415,9 +429,20 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                         String topic = requestHeader.getTopic();
                         long offset = requestHeader.getQueueOffset();
                         int queueId = requestHeader.getQueueId();
+                        //注意这里的PullRequest是在broker端的(longpolling包下面) 还有一个PullMessageService中的PullRequest是在client端中
+                        //这里构造时传入了channel,实现长轮询的基石
                         PullRequest pullRequest = new PullRequest(request, channel, pollingTimeMills,
                             this.brokerController.getMessageStore().now(), offset, subscriptionData, messageFilter);
+
+                        //在这里挂起，其实也就是添加到内存pullRequestTable中维护的pull request list，然后由PullRequestHoldService线程来取
+                        //这里面的值，线程的run方法中会每隔5秒轮询一次，检查pullRequestTable中的内容，解析出来topic和queueId，根据它们到MessageStore
+                        //中获取该主题队列的最大偏移量offset值，最后调用notifyMessageArriving通知消息到达进行后续的处理
                         this.brokerController.getPullRequestHoldService().suspendPullRequest(topic, queueId, pullRequest);
+
+                        //这里将构造的PullRequest加入到pullRequestTable中后，还做了一个很重要的操作就是将response置为null了，为什么要这么做?
+                        //因为在这个processRequest()逻辑处理完成返回后会回到netty server的线程池执行处(NettyRemotingAbstract#processRequestCommand)，在那里做了
+                        //判断 if(response != null){通过channel将响应写回客户端} else{ } 看到这里也就明白了为什么要置为空，也就是说客户端在拉取消息时如果没有拉到消息不会立即响应，而是
+                        //延迟一会，通过PullRequestHoldService线程进行
                         response = null;
                         break;
                     }
@@ -551,12 +576,19 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             @Override
             public void run() {
                 try {
+                    //这里的处理请求代码和写回消息响应都是在线程池PullMessageExecutor的同一个线程中(PullMessageThread_16)执行
+                    //再次走一遍和一开始拉取消息时netty server端处理器进行处理请求的逻辑，只不过这时传递的brokerAllowSuspend为false，这次就不允许再进行挂起了
                     final RemotingCommand response = PullMessageProcessor.this.processRequest(channel, request, false);
 
                     if (response != null) {
                         response.setOpaque(request.getOpaque());
                         response.markResponseType();
                         try {
+                            //log.info("长轮询处理后得到的response不为null {}，通过clientChannel写回客户端 {}", response, channel);
+                            if (response.getCode() == ResponseCode.SUCCESS){
+                                //code=11对应RequestCode.PULL_MESSAGE
+                                log.info("通过长轮询挂起时维护的客户端channel写回消息给客户端 requestId:{}, code:{}", request.getOpaque(), request.getCode());
+                            }
                             channel.writeAndFlush(response).addListener(new ChannelFutureListener() {
                                 @Override
                                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -579,6 +611,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 }
             }
         };
+        //再次通过该线程池提交封装的任务，此时的这个channel通道还是之前拉取消息进行请求处理时的channel
         this.brokerController.getPullMessageExecutor().submit(new RequestTask(run, channel, request));
     }
 

@@ -203,10 +203,13 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         final ProcessQueue processQueue,
         final MessageQueue messageQueue,
         final boolean dispatchToConsume) {
+        //在DefaultMQPushConsumer中设置的批量消费消息大小consumeMessageBatchMaxSize值，默认为1条
         final int consumeBatchSize = this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
         if (msgs.size() <= consumeBatchSize) {
+            //在这里构造了一个消费任务ConsumeRequest，它是一个Runnable，将其提交到这里面维护的consumeExecutor线程池
             ConsumeRequest consumeRequest = new ConsumeRequest(msgs, processQueue, messageQueue);
             try {
+                log.info("拉取的消息已被提交到consumeExecutor线程池进行调度消费{}.", msgs);
                 this.consumeExecutor.submit(consumeRequest);
             } catch (RejectedExecutionException e) {
                 this.submitConsumeRequestLater(consumeRequest);

@@ -298,6 +298,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
         final long beginTimestamp = System.currentTimeMillis();
 
+        //构造拉取消息的回调，在该回调中完成将拉取到的消息提交值ConsumeMessageService(并发/顺序，根据注册的消息监听器来判断)的线程池consumeExecutor进行消费
         PullCallback pullCallback = new PullCallback() {
             @Override
             public void onSuccess(PullResult pullResult) {
@@ -308,6 +309,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     switch (pullResult.getPullStatus()) {
                         case FOUND:
                             long prevRequestOffset = pullRequest.getNextOffset();
+                            //在这里设置了下一次应该拉取消息的offset
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
                             long pullRT = System.currentTimeMillis() - beginTimestamp;
                             DefaultMQPushConsumerImpl.this.getConsumerStatsManager().incPullRT(pullRequest.getConsumerGroup(),
@@ -323,16 +325,21 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                     pullRequest.getMessageQueue().getTopic(), pullResult.getMsgFoundList().size());
 
                                 boolean dispatchToConsume = processQueue.putMessage(pullResult.getMsgFoundList());
+                                //这里消息成功拉取回来后直接提交到consumeMessageService上进行处理，后续至于消息要怎么消费，在PullCallback里面就不关心了
+                                //消息会被提交到consumeExecutor线程池上进行后续的消费处理
                                 DefaultMQPushConsumerImpl.this.consumeMessageService.submitConsumeRequest(
                                     pullResult.getMsgFoundList(),
                                     processQueue,
                                     pullRequest.getMessageQueue(),
                                     dispatchToConsume);
 
+                                //如果pullInterval设置为大于0，则会等待设置的该间隔时间再次进行消息拉取,默认为0
                                 if (DefaultMQPushConsumerImpl.this.defaultMQPushConsumer.getPullInterval() > 0) {
                                     DefaultMQPushConsumerImpl.this.executePullRequestLater(pullRequest,
                                         DefaultMQPushConsumerImpl.this.defaultMQPushConsumer.getPullInterval());
                                 } else {
+                                    //到这里就几本完成了本次消息拉取的过程，立马进入下一次的消息拉取，此时pullRequest里面的nextOffset已在上面设置为了最新的消费位点
+                                    log.info("立马进入下一次消息拉取! prevRequestOffset:{}, nextOffset:{}", prevRequestOffset, pullRequest.getNextOffset());
                                     DefaultMQPushConsumerImpl.this.executePullRequestImmediately(pullRequest);
                                 }
                             }
@@ -422,6 +429,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             classFilter = sd.isClassFilterMode();
         }
 
+        //这里传入构造sysFlag的suspend就是固定的true，所以在broker端解码后得到的hasSuspendFlag就是true (PullSysFlag.hasSuspendFlag(requestHeader.getSysFlag()))
         int sysFlag = PullSysFlag.buildSysFlag(
             commitOffsetEnable, // commitOffset
             true, // suspend
@@ -429,6 +437,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             classFilter // class filter
         );
         try {
+            //拉取消息的核心实现
             this.pullAPIWrapper.pullKernelImpl(
                 pullRequest.getMessageQueue(),
                 subExpression,

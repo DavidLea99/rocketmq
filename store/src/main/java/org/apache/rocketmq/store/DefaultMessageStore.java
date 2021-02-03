@@ -575,6 +575,7 @@ public class DefaultMessageStore implements MessageStore {
                                 }
                             }
 
+                            //根据选择的messageFilter对消息进行过滤，这里不是精确过滤的，是根据tag的hashCode来比对，所以可能会存在冲突
                             if (messageFilter != null
                                 && !messageFilter.isMatchedByConsumeQueue(isTagsCodeLegal ? tagsCode : null, extRet ? cqExtUnit : null)) {
                                 if (getResult.getBufferTotalSize() == 0) {
@@ -1133,6 +1134,7 @@ public class DefaultMessageStore implements MessageStore {
         if (null == map) {
             ConcurrentMap<Integer, ConsumeQueue> newMap = new ConcurrentHashMap<Integer, ConsumeQueue>(128);
             ConcurrentMap<Integer, ConsumeQueue> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
+            //防止并发操作，假如当前线程已经进入map==null的判断里面，这时有另外线程也进来进行putIfAbsent操作，那么返回的oldMap就不是null，此时需要使用这个map
             if (oldMap != null) {
                 map = oldMap;
             } else {

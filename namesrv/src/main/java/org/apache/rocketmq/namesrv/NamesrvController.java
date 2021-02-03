@@ -53,8 +53,11 @@ public class NamesrvController {
 
     private RemotingServer remotingServer;
 
+    //用于namesrv与broker连接通道的监听回调处理，实现了ChannelEventListener接口 当通道关闭、通道发生异常、通道空闲时
+    //将其从RouteInfoManager中维护的HashMap结构中移除挂掉的broker
     private BrokerHousekeepingService brokerHousekeepingService;
 
+    //固定线程数量的线程池，默认为8个线程
     private ExecutorService remotingExecutor;
 
     private Configuration configuration;
@@ -77,13 +80,18 @@ public class NamesrvController {
 
         this.kvConfigManager.load();
 
+        //初始化化namesrv的netty server服务
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
+        //初始化namesrv线程池，用于接着的注册处理器时netty中请求处理对应的线程池
         this.remotingExecutor =
             Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));
 
+        //给NettyRemotingAbstract的defaultRequestProcessor设置一个默认的处理器,对于namesrv启动而言，就弄了一个默认的请求处理器来处理所有相关的rpc请求处理
+        //将业务线程池与默认的请求处理器绑定 this.defaultRequestProcessor = new Pair<NettyRequestProcessor, ExecutorService>(processor, executor);
         this.registerProcessor();
 
+        //开启定时任务，每隔10s定时扫描broker，维护存活的broker信息
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -92,6 +100,7 @@ public class NamesrvController {
             }
         }, 5, 10, TimeUnit.SECONDS);
 
+        //开启定时任务，每隔10s打印KVConfig配置信息
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -153,6 +162,7 @@ public class NamesrvController {
     }
 
     public void start() throws Exception {
+        //启动netty server服务
         this.remotingServer.start();
 
         if (this.fileWatchService != null) {

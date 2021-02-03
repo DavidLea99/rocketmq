@@ -417,6 +417,10 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, RemotingCommand msg) throws Exception {
+            if (msg.getCode() == 310){
+                //NettyRemotingClient端发送消息请求
+                System.out.println("接收到发送消息请求[SEND_MESSAGE_V2-310]:" + msg);
+            }
             processMessageReceived(ctx, msg);
         }
     }

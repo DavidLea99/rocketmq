@@ -1208,6 +1208,8 @@ public class LoggingBuilder {
             sb.append(event.getLevel());
             sb.append(" ");
             sb.append(event.getLoggerName());
+            sb.append(" ");
+            sb.append(event.getThreadName());
             sb.append(" - ");
             sb.append(event.getMessage());
             String[] throwableStr = event.getThrowableStr();

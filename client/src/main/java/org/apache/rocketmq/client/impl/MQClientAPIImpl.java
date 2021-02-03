@@ -749,6 +749,9 @@ public class MQClientAPIImpl {
                     try {
                         PullResult pullResult = MQClientAPIImpl.this.processPullResponse(response);
                         assert pullResult != null;
+                        if (response.getCode() == 0){
+                            log.info("pullMessageAsync-》netty回调结果{}, {}", response, pullResult);
+                        }
                         pullCallback.onSuccess(pullResult);
                     } catch (Exception e) {
                         pullCallback.onException(e);

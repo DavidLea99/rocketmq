@@ -22,10 +22,13 @@ import org.apache.rocketmq.store.ConsumeQueue;
 
 public class MessageStoreConfig {
     //The root directory in which the log data is kept
+    //这里面的配置都可以通过启动BrokerStartup时指定的-c参数配置文件进行外部配置
+    //broker端存储消息的根路径配置 默认为${user.home}/store/
     @ImportantField
     private String storePathRootDir = System.getProperty("user.home") + File.separator + "store";
 
     //The directory in which the commitlog is kept
+    //commitlog文件所在的路径配置 默认为${user.home}/store/commitlog/
     @ImportantField
     private String storePathCommitLog = System.getProperty("user.home") + File.separator + "store"
         + File.separator + "commitlog";
@@ -33,8 +36,11 @@ public class MessageStoreConfig {
     // CommitLog file size,default is 1G
     private int mappedFileSizeCommitLog = 1024 * 1024 * 1024;
     // ConsumeQueue file size,default is 30W
+    //ConsumeQueue的映射文件大小6000000字节 约5.72M  每个ConsumeQueue存储的都是定长数据(20字节，消息偏移量、大小、消息tag的hashcode值tagsCode)
+    //这也是为什么broker对消息进行过滤时如果expressionType是TAG,那会根据tag字符串的hashcode进行消息的过滤，而不是通过tag字符串本身来过滤
     private int mappedFileSizeConsumeQueue = 300000 * ConsumeQueue.CQ_STORE_UNIT_SIZE;
     // enable consume queue ext
+    //是否开启ConsumeQueueExt文件，当消费端消息消费速度跟不上时是否创建一个扩展的ConsumeQueue文件来分担一部分，默认不创建
     private boolean enableConsumeQueueExt = false;
     // ConsumeQueue extend file size, 48M
     private int mappedFileSizeConsumeQueueExt = 48 * 1024 * 1024;
@@ -43,7 +49,7 @@ public class MessageStoreConfig {
     private int bitMapLengthConsumeQueueExt = 64;
 
     // CommitLog flush interval
-    // flush data to disk
+    // flush data to disk 默认500ms flush操作也即调用文件通道的force()
     @ImportantField
     private int flushIntervalCommitLog = 500;
 
@@ -61,7 +67,7 @@ public class MessageStoreConfig {
     // Whether schedule flush,default is real-time
     @ImportantField
     private boolean flushCommitLogTimed = false;
-    // ConsumeQueue flush interval
+    // ConsumeQueue flush interval 刷新ConsumeQueue间隔时间 1s
     private int flushIntervalConsumeQueue = 1000;
     // Resource reclaim interval
     private int cleanResourceInterval = 10000;

@@ -47,11 +47,16 @@ import org.apache.rocketmq.remoting.common.RemotingUtil;
 
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
+    //namesrv与broker之间连接的空闲时长，默认为2分钟 在两分钟内还没有收到来自broker的心跳包则会关闭该连接通道
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
+    //这里值得借鉴的读写锁使用方式，用于加锁控制下面非线程安全容器HashMap的使用
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    //主题与队列的映射关系，用来记录一个topic对应的队列数据信息(即broker上含有该topic的队列个数/权限/同步标记等信息包括brokerName,读队列个数,写队列个数,perm,topicSynFlag)
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    //记录活跃的broker信息,不是实时更新的，定时任务会每隔10s扫描一次所有的broker，根据心跳数据来获取broker的状态，这里会存在高可用问题，当某个broker不可用时，生产者
+    //还会获取到该broker地址信息，这里并不是立即能感应到，那RocketMq是怎么保证消息发送高可用的呢？失败规避机制、重试机制
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 

@@ -56,14 +56,19 @@ public class MQFaultStrategy {
     }
 
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+        //是否启用发送失败延迟规避，默认为false
         if (this.sendLatencyFaultEnable) {
             try {
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
+                //这里为什么会循环，因为获取到的MessageQueue可能不可用，需要进行轮询
                 for (int i = 0; i < tpInfo.getMessageQueueList().size(); i++) {
                     int pos = Math.abs(index++) % tpInfo.getMessageQueueList().size();
                     if (pos < 0)
                         pos = 0;
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+                    //判断得到的这个MessageQueue是否可用，就是通过判断当前时间戳是否大于等于mq故障时设置的故障延迟时长对应的时间戳
+                    //比如发生故障时的时间戳:1609157906755，延迟时长为:600000，得到的FaultItem中startTimestamp值为1609158506755
+                    //如果当前时间还没到1609158506755这一刻，那这个mq就不可用进行下一个
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName())) {
                         if (null == lastBrokerName || mq.getBrokerName().equals(lastBrokerName))
                             return mq;
@@ -94,6 +99,7 @@ public class MQFaultStrategy {
 
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
         if (this.sendLatencyFaultEnable) {
+            //得到的是600000L 也就是10分钟
             long duration = computeNotAvailableDuration(isolation ? 30000 : currentLatency);
             this.latencyFaultTolerance.updateFaultItem(brokerName, currentLatency, duration);
         }

@@ -53,6 +53,7 @@ public class PullRequestHoldService extends ServiceThread {
         }
 
         mpr.addPullRequest(pullRequest);
+        log.info("请求已加入pullRequestList，mpr:{}", mpr);
     }
 
     private String buildKey(final String topic, final int queueId) {
@@ -68,13 +69,16 @@ public class PullRequestHoldService extends ServiceThread {
         log.info("{} service started", this.getServiceName());
         while (!this.isStopped()) {
             try {
+                //所谓的挂起其实就是体现在了这里，通过让线程wait for running一段时间(5s)
                 if (this.brokerController.getBrokerConfig().isLongPollingEnable()) {
                     this.waitForRunning(5 * 1000);
                 } else {
                     this.waitForRunning(this.brokerController.getBrokerConfig().getShortPollingTimeMills());
                 }
 
+                //log.info("开始进行长轮询，进行checkHoldRequest");
                 long beginLockTimestamp = this.systemClock.now();
+                //轮询的关键实现
                 this.checkHoldRequest();
                 long costTime = this.systemClock.now() - beginLockTimestamp;
                 if (costTime > 5 * 1000) {
@@ -120,6 +124,7 @@ public class PullRequestHoldService extends ServiceThread {
         if (mpr != null) {
             List<PullRequest> requestList = mpr.cloneListAndClear();
             if (requestList != null) {
+                //进行重放的pull list
                 List<PullRequest> replayList = new ArrayList<PullRequest>();
 
                 for (PullRequest request : requestList) {
@@ -138,6 +143,11 @@ public class PullRequestHoldService extends ServiceThread {
 
                         if (match) {
                             try {
+                                //这里仍然会将其封装成一个RequestTask提交到BrokerController中维护的线程池pullMessageExecutor中
+                                //在该线程池中执行时，任务的run()方法中首先再次调用一次this.processRequest(channel, request, false);方法进行处理
+                                //然后通过保存的clientChannel将得到的response(如果这时候有新消息产生了那response不会为null)写回到client端
+                                //注意这里调用的时候brokerAllowSuspend参数传的是false，另外一个调用的地方是netty server的回调调用时传递的是true
+                                log.info("通知消息到达，将其提交至BrokerController中维护的拉取消息线程池pullMessageExecutor中(和netty请求处理器处理客户端正常请求时相同的线程池)");
                                 this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),
                                     request.getRequestCommand());
                             } catch (Throwable e) {
@@ -147,6 +157,9 @@ public class PullRequestHoldService extends ServiceThread {
                         }
                     }
 
+                    //默认挂起的超时时间为15s 当前时间的毫秒值大于或等于(挂起时的时间戳+超时时间毫秒值)，说明当前已经过了设定的超时的时间，此时再次执行请求
+                    // -------|---------------!------------
+                    //      ->              -> 时间走到这里表示已经超过设定的时间
                     if (System.currentTimeMillis() >= (request.getSuspendTimestamp() + request.getTimeoutMillis())) {
                         try {
                             this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),

@@ -71,11 +71,14 @@ public class CommitLog {
         this.defaultMessageStore = defaultMessageStore;
 
         if (FlushDiskType.SYNC_FLUSH == defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
+            //同步刷盘时使用的线程服务
             this.flushCommitLogService = new GroupCommitService();
         } else {
+            //异步刷盘时使用的线程服务
             this.flushCommitLogService = new FlushRealTimeService();
         }
 
+        //开启TransientStorePool时使用的刷盘线程服务
         this.commitLogService = new CommitRealTimeService();
 
         this.appendMessageCallback = new DefaultAppendMessageCallback(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());
@@ -619,6 +622,7 @@ public class CommitLog {
                 return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);
             }
 
+            //将msg通过获取的MappedFile写入文件
             result = mappedFile.appendMessage(msg, this.appendMessageCallback);
             switch (result.getStatus()) {
                 case PUT_OK:
@@ -945,6 +949,7 @@ public class CommitLog {
         protected static final int RETRY_TIMES_OVER = 10;
     }
 
+    //transientStorePoolEnable开启时并且刷盘方式为ASYNC_FLUSH并且节点角色为非SLAVE
     class CommitRealTimeService extends FlushCommitLogService {
 
         private long lastCommitTimestamp = 0;
@@ -998,6 +1003,7 @@ public class CommitLog {
         }
     }
 
+    //ASYNC_FLUSH
     class FlushRealTimeService extends FlushCommitLogService {
         private long lastFlushTimestamp = 0;
         private long printTimes = 0;
@@ -1110,6 +1116,7 @@ public class CommitLog {
 
     /**
      * GroupCommit Service
+     * SYNC_FLUSH
      */
     class GroupCommitService extends FlushCommitLogService {
         private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>();
